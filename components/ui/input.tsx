@@ -24,7 +24,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           )}
           <input
             type={isPassword && showPassword ? "text" : type}
-            className={`w-full bg-surface-container-low border-2 border-transparent focus:border-primary focus:bg-white transition-colors duration-200 rounded-xl h-14 text-on-surface placeholder:text-on-surface-variant/40 outline-none ${
+            className={`w-full bg-surface-container-lowest border border-surface-dim shadow-sm focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl h-14 text-on-surface placeholder:text-on-surface-variant/40 outline-none ${
               icon ? "pl-12" : "pl-4"
             } ${isPassword ? "pr-12" : "pr-4"} ${className || ""}`}
             ref={ref}

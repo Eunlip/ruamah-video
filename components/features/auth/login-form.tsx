@@ -3,16 +3,21 @@
 import React, { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { IdCard, Lock, ArrowRight } from "lucide-react";
+import { IdCard, Lock } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 export function LoginForm() {
     const [nrp, setNrp] = useState("");
     const [password, setPassword] = useState("");
 
+    const router = useRouter();
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         console.log("Login attempt:", { nrp, password });
         // TODO: Implement actual login
+        // Dummy login redirect
+        router.push("/home");
     };
 
     return (
@@ -42,9 +47,7 @@ export function LoginForm() {
             />
 
             <div className="pt-2">
-                <Button type="submit">
-                    Sign In <ArrowRight size={20} />
-                </Button>
+                <Button type="submit">Masuk</Button>
             </div>
         </form>
     );
