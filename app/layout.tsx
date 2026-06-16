@@ -18,6 +18,8 @@ export const metadata: Metadata = {
   description: "Aplikasi manajemen video",
 };
 
+import { BackButtonHandler } from "@/components/features/capacitor/back-button-handler";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -30,6 +32,7 @@ export default function RootLayout({
       className={`${plusJakartaSans.variable} ${anybody.variable} h-full antialiased`}
     >
       <body suppressHydrationWarning className="min-h-full flex flex-col font-sans bg-surface text-on-surface">
+        <BackButtonHandler />
         <UpdateChecker />
         {children}
       </body>

@@ -13,7 +13,7 @@ export default function LoginPage() {
         // Cek apakah user sudah login sebelumnya
         const storedUser = localStorage.getItem("user");
         if (storedUser) {
-            router.replace("/folder");
+            router.replace("/home");
             return;
         }
 

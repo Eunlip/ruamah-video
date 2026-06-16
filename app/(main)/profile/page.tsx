@@ -38,7 +38,8 @@ export default function ProfilePage() {
         return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
     };
 
-    const initials = user ? getInitials(user.nama) : "?";
+    const userName = user ? (user.nama || (user as any).name || "Pengguna") : "Memuat...";
+    const initials = user ? getInitials(userName) : "?";
 
     return (
         <div className="flex flex-col min-h-[100dvh] pt-8 px-6 pb-24 bg-surface">
@@ -53,7 +54,7 @@ export default function ProfilePage() {
                     {initials}
                 </div>
                 <h2 className="text-xl font-bold text-on-surface text-center">
-                    {user ? user.nama : "Memuat..."}
+                    {userName}
                 </h2>
                 <p className="text-on-surface-variant text-sm mt-1 font-mono">
                     {user ? user.nrp : "---"}
