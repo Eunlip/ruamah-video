@@ -1,11 +1,17 @@
 "use client";
 
-import React, { useState, useEffect, Suspense } from "react";
+import React, { useState, useEffect, Suspense, useRef } from "react";
 import { ArrowLeft, Video, Clock, X, Search, Trash2, Download, Loader2 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { VideoUploader } from "@/components/features/video/video-uploader";
 import { useLongPress } from "@/hooks/use-long-press";
 import { getVideosAPI } from "@/services/api";
+import { Capacitor } from "@capacitor/core";
+import { Browser } from "@capacitor/browser";
+import { InAppBrowser, DefaultWebViewOptions } from "@capacitor/inappbrowser";
+import { CapacitorHttp } from "@capacitor/core";
+import { Filesystem, Directory } from "@capacitor/filesystem";
+import { Media } from "@capacitor-community/media";
 
 interface VideoItem {
     id: string;
@@ -104,6 +110,7 @@ function FolderDetailContent() {
     const [playingVideo, setPlayingVideo] = useState<VideoItem | null>(null);
     const [actionSheetVideo, setActionSheetVideo] = useState<VideoItem | null>(null);
     const [userRole, setUserRole] = useState<string>("viewer");
+    const [isNavigatingToVideo, setIsNavigatingToVideo] = useState(false);
 
     useEffect(() => {
         const storedUser = localStorage.getItem("user");
@@ -122,42 +129,95 @@ function FolderDetailContent() {
     const [searchQuery, setSearchQuery] = useState("");
 
     // Fetch real data from server
-    useEffect(() => {
-        const fetchVideos = async () => {
+    const fetchVideos = async (isRefresh = false) => {
+        if (!isRefresh) {
+            // Prevent synchronous setState inside useEffect to fix cascading render warning
+            await Promise.resolve();
             setIsLoadingData(true);
-            const res = await getVideosAPI();
-            if (res.success && res.data) {
-                interface ApiVideo {
-                    id: string;
-                    category: string;
-                    year: string | number;
-                    type: string;
-                    title: string;
-                    thumbnailData?: string;
-                    driveUrl?: string;
-                    duration?: string;
-                    createdAt?: string;
-                }
-                const filtered = res.data.filter((v: ApiVideo) => 
-                    String(v.category) === String(categoryName) &&
-                    String(v.year) === String(year) &&
-                    String(v.type).toLowerCase() === String(type).toLowerCase()
-                ).map((v: ApiVideo) => ({
-                    id: String(v.id),
-                    title: v.title,
-                    thumbnailData: v.thumbnailData || "dummy",
-                    videoUrl: v.driveUrl,
-                    duration: v.duration,
-                    createdAt: new Date(v.createdAt || Date.now()),
-                }));
-                setVideos(filtered);
+        }
+        
+        const res = await getVideosAPI();
+        if (res.success && res.data) {
+            interface ApiVideo {
+                id: string;
+                category: string;
+                year: string | number;
+                type: string;
+                title: string;
+                thumbnailData?: string;
+                driveUrl?: string;
+                duration?: string;
+                createdAt?: string;
             }
+            const filtered = res.data.filter((v: ApiVideo) => 
+                String(v.category) === String(categoryName) &&
+                String(v.year) === String(year) &&
+                String(v.type).toLowerCase() === String(type).toLowerCase()
+            ).map((v: ApiVideo) => ({
+                id: String(v.id),
+                title: v.title,
+                thumbnailData: v.thumbnailData || "dummy",
+                videoUrl: v.driveUrl,
+                duration: v.duration,
+                createdAt: new Date(v.createdAt || Date.now()),
+            }));
+            setVideos(filtered);
+        }
+        
+        if (!isRefresh) {
             setIsLoadingData(false);
-        };
-        fetchVideos();
+        }
+    };
+
+    useEffect(() => {
+        const timeoutId = setTimeout(() => {
+            fetchVideos();
+        }, 0);
+        return () => clearTimeout(timeoutId);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [categoryName, year, type]);
 
     const isKpi = type === "kpi";
+
+    // Pull to Refresh State
+    const [isDragging, setIsDragging] = useState(false);
+    const [pullDistance, setPullDistance] = useState(0);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const startY = useRef(0);
+    const currentY = useRef(0);
+
+    const handleTouchStart = (e: React.TouchEvent) => {
+        if (window.scrollY === 0) {
+            startY.current = e.touches[0].clientY;
+            setIsDragging(true);
+        }
+    };
+
+    const handleTouchMove = (e: React.TouchEvent) => {
+        if (!isDragging) return;
+        currentY.current = e.touches[0].clientY;
+        const distance = currentY.current - startY.current;
+        
+        if (distance > 0 && window.scrollY <= 0) {
+            const resistanceDistance = Math.min(distance * 0.4, 100); 
+            setPullDistance(resistanceDistance);
+        } else {
+            setPullDistance(0);
+        }
+    };
+
+    const handleTouchEnd = async () => {
+        if (!isDragging) return;
+        setIsDragging(false);
+        
+        if (pullDistance > 60) {
+            setIsRefreshing(true);
+            setPullDistance(60); 
+            await fetchVideos(true);
+            setIsRefreshing(false);
+        }
+        setPullDistance(0);
+    };
 
     const handleVideoUploaded = (video: VideoItem) => {
         setVideos((prev) => [video, ...prev]);
@@ -185,27 +245,103 @@ function FolderDetailContent() {
         }
     };
 
-    const handleSaveVideo = (video: VideoItem) => {
+    const handleSaveVideo = async (video: VideoItem) => {
         if (!video.videoUrl) {
             alert("URL Video tidak ditemukan.");
             return;
         }
         setActionSheetVideo(null);
         
-        // Ekstrak ID dari URL Google Drive
-        const match = video.videoUrl.match(/\/d\/(.+?)\//);
+        // Cek jika ini Blob (baru di-upload)
+        if (video.videoUrl.startsWith("blob:")) {
+            alert("Video ini baru saja diunggah dan masih dalam format sementara. Silakan Tarik ke Bawah (Refresh) halaman ini terlebih dahulu untuk mendapatkan link unduhan resminya.");
+            return;
+        }
+
+        const match = video.videoUrl.match(/\/d\/(.+?)\//) || video.videoUrl.match(/id=([^&]+)/);
         if (match && match[1]) {
             const fileId = match[1];
-            // Paksa download file Google Drive
-            window.open(`https://drive.google.com/uc?export=download&id=${fileId}`, '_blank');
+            const downloadUrl = `https://drive.google.com/uc?export=download&confirm=t&id=${fileId}`;
+            
+            if (Capacitor.isNativePlatform()) {
+                alert("Sedang mengunduh video... Mohon tunggu sebentar.");
+                try {
+                    const safeTitle = (video.title || 'video').replace(/[^a-zA-Z0-9_-]/g, '_');
+                    const result = await Filesystem.downloadFile({
+                        url: downloadUrl,
+                        path: `temp_save_${safeTitle}_${fileId}.mp4`,
+                        directory: Directory.Cache,
+                    });
+                    
+                    if (result.path) {
+                        try {
+                            const uriRes = await Filesystem.getUri({ path: `temp_save_${safeTitle}_${fileId}.mp4`, directory: Directory.Cache });
+                            
+                            let albumId: string | undefined = undefined;
+                            if (Capacitor.getPlatform() === 'android') {
+                                try {
+                                    const { path: albumPath } = await Media.getAlbumsPath();
+                                    albumId = albumPath;
+                                } catch (e) {
+                                    const albums = await Media.getAlbums();
+                                    if (albums && albums.albums && albums.albums.length > 0) {
+                                        albumId = albums.albums[0].identifier;
+                                    }
+                                }
+                            }
+
+                            await Media.saveVideo({ path: uriRes.uri, albumIdentifier: albumId });
+                            alert(`✅ Video berhasil disimpan langsung ke Galeri HP Anda!`);
+                        } catch (error) {
+                            alert(`✅ Video terunduh, tapi gagal masuk ke Galeri. Pesan error: ${(error as Error).message || JSON.stringify(error)}`);
+                        }
+                    }
+                } catch (error) {
+                    alert("❌ Gagal mengunduh video. Pastikan koneksi stabil.");
+                }
+            } else {
+                window.open(downloadUrl, '_blank');
+            }
         } else {
-            // Jika ini adalah Blob URL (video yang baru saja di-upload tapi belum di-refresh)
-            const a = document.createElement("a");
-            a.href = video.videoUrl;
-            a.download = `${video.title}.mp4`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+            alert("Format URL Video tidak didukung untuk diunduh.");
+        }
+    };
+
+    const handlePlayVideo = async (video: VideoItem) => {
+        if (!video.videoUrl) {
+            alert("URL Video tidak ditemukan.");
+            return;
+        }
+
+        if (video.videoUrl.startsWith('blob:')) {
+            setPlayingVideo(video);
+            setTimeout(() => {
+                const videoEl = document.getElementById("main-video-player") as WebkitHTMLVideoElement;
+                if (videoEl) {
+                    if (videoEl.requestFullscreen) {
+                        videoEl.requestFullscreen().catch(() => {});
+                    } else if (videoEl.webkitRequestFullscreen) {
+                        videoEl.webkitRequestFullscreen();
+                    } else if (videoEl.webkitEnterFullscreen) {
+                        videoEl.webkitEnterFullscreen();
+                    }
+                }
+            }, 50);
+        } else {
+            if (Capacitor.isNativePlatform()) {
+                // Tampilkan loading screen sebelum berpindah halaman
+                setIsNavigatingToVideo(true);
+                
+                // Simpan state path terakhir ke sessionStorage agar ketika user menekan tombol Back,
+                // aplikasi tahu harus kembali ke folder ini, bukan ke /home
+                sessionStorage.setItem("lastPath", window.location.pathname + window.location.search);
+                
+                // Dengan allowNavigation di capacitor.config.ts, kita bisa menavigasi Main WebView
+                // langsung ke tautan Google Drive. Ini mengizinkan Fullscreen HTML5 bekerja dengan sempurna.
+                window.location.href = video.videoUrl;
+            } else {
+                setPlayingVideo(video);
+            }
         }
     };
 
@@ -247,58 +383,21 @@ function FolderDetailContent() {
         };
     }, []);
 
-    const handlePlayVideo = (video: VideoItem) => {
-        setPlayingVideo(video);
-
-        // Request native fullscreen
-        setTimeout(() => {
-            const videoEl = document.getElementById(
-                "main-video-player",
-            ) as WebkitHTMLVideoElement;
-            if (videoEl) {
-                if (videoEl.requestFullscreen) {
-                    videoEl
-                        .requestFullscreen()
-                        .catch((e) => console.log("Fullscreen failed:", e));
-                } else if (videoEl.webkitRequestFullscreen) {
-                    videoEl.webkitRequestFullscreen();
-                } else if (videoEl.webkitEnterFullscreen) {
-                    // iOS Safari fallback
-                    videoEl.webkitEnterFullscreen();
-                }
-
-                // Try to force landscape if it's a landscape video (width > height)
-                // This relies on the metadata being loaded, but as a best-effort:
-                videoEl.onloadedmetadata = () => {
-                    if (videoEl.videoWidth > videoEl.videoHeight) {
-                        try {
-                            interface LockableScreenOrientation
-                                extends ScreenOrientation {
-                                lock?: (
-                                    orientation: "landscape",
-                                ) => Promise<void>;
-                            }
-                            const orientation =
-                                screen.orientation as LockableScreenOrientation;
-                            if (orientation && orientation.lock) {
-                                orientation.lock("landscape").catch(() => {});
-                            }
-                        } catch (e) {}
-                    }
-                };
-            }
-        }, 50);
-    };
 
     const filteredVideos = videos.filter((v) =>
         v.title.toLowerCase().includes(searchQuery.toLowerCase()),
     );
 
     return (
-        <div className="flex flex-col min-h-[100dvh] bg-surface pb-24">
+        <div 
+            className="flex flex-col min-h-[100dvh] bg-surface pb-24 relative overflow-hidden"
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+        >
             {/* Header */}
             <header
-                className={`sticky top-0 z-20 pt-8 pb-4 px-5 flex items-center shadow-md transition-colors duration-300 ${
+                className={`sticky top-0 z-30 pt-8 pb-4 px-5 flex items-center shadow-md transition-colors duration-300 ${
                     isKpi ? "bg-primary" : "bg-secondary"
                 } text-white`}
             >
@@ -358,7 +457,25 @@ function FolderDetailContent() {
                 )}
             </header>
 
-            <main className="flex-1 px-5 pt-6">
+            {/* Native Pull to Refresh Indicator (Under Header) */}
+            <div 
+                className="absolute left-0 right-0 flex justify-center z-20 pointer-events-none"
+                style={{ 
+                    top: '90px', // Just below the header
+                    transform: `translateY(${isRefreshing ? 20 : Math.max(pullDistance - 40, -40)}px) scale(${isRefreshing ? 1 : Math.min(pullDistance / 50, 1)})`,
+                    opacity: pullDistance > 10 || isRefreshing ? Math.min(pullDistance / 40, 1) : 0,
+                    transition: isDragging ? 'none' : 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s'
+                }}
+            >
+                <div className="bg-surface-container-lowest shadow-[0_4px_12px_rgba(0,0,0,0.15)] rounded-full w-11 h-11 flex items-center justify-center border border-surface-dim/30">
+                    <Loader2 
+                        className={`w-6 h-6 ${isKpi ? 'text-primary' : 'text-secondary'} ${isRefreshing ? 'animate-spin' : ''}`} 
+                        style={{ transform: isRefreshing ? 'none' : `rotate(${pullDistance * 6}deg)` }}
+                    />
+                </div>
+            </div>
+
+            <main className="flex-1 px-5 pt-6 relative z-10">
                 {userRole === "editor" && (
                     <div className="mb-6">
                         <VideoUploader
@@ -380,7 +497,7 @@ function FolderDetailContent() {
                     </h3>
 
                     <div className="flex-1 relative">
-                        {isLoadingData ? (
+                        {isLoadingData && !isRefreshing ? (
                             <div className="flex flex-col items-center justify-center py-12 px-4 bg-surface-container-lowest rounded-[20px] text-on-surface-variant border border-surface-dim/50">
                                 <Loader2 className="w-10 h-10 animate-spin mb-4 text-primary" />
                                 <p className="font-bold text-on-surface">Memuat data video...</p>
@@ -415,7 +532,7 @@ function FolderDetailContent() {
                                         key={video.id}
                                         video={video}
                                         isDeleting={isDeletingVideo === video.id}
-                                        onPlay={() => setPlayingVideo(video)}
+                                        onPlay={() => handlePlayVideo(video)}
                                         onLongPress={() =>
                                             setActionSheetVideo(video)
                                         }
@@ -441,22 +558,29 @@ function FolderDetailContent() {
                             <X size={24} className="text-white" />
                         </button>
                     </header>
-                    <div className="flex-1 flex items-center justify-center p-0 sm:p-4">
-                        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                        <video
-                            id="main-video-player"
-                            src={
-                                playingVideo.videoUrl.startsWith("blob:")
-                                    ? playingVideo.videoUrl
-                                    : (playingVideo.videoUrl.match(/\/d\/(.+?)\//)
-                                          ? `https://drive.google.com/uc?export=download&id=${playingVideo.videoUrl.match(/\/d\/(.+?)\//)![1]}`
-                                          : playingVideo.videoUrl)
-                            }
-                            controls
-                            autoPlay
-                            playsInline
-                            className="max-w-full max-h-[85vh] w-full object-contain outline-none"
-                        />
+                    <div className="flex-1 w-full h-full relative bg-black flex items-center justify-center">
+                        {playingVideo.videoUrl.startsWith("blob:") ? (
+                            <video
+                                id="main-video-player"
+                                src={playingVideo.videoUrl}
+                                className="max-w-full max-h-[85vh] w-full object-contain outline-none"
+                                controls
+                                controlsList="nodownload"
+                                playsInline
+                                autoPlay
+                                onError={() => {
+                                    alert("Video sementara telah kadaluarsa. Silakan Tarik ke Bawah (Refresh) halaman ini.");
+                                    setPlayingVideo(null);
+                                }}
+                            />
+                        ) : (
+                            <iframe
+                                src={playingVideo.videoUrl.replace("/view", "/preview")}
+                                className="w-full h-full border-0 bg-black absolute inset-0"
+                                allow="autoplay; fullscreen"
+                                allowFullScreen
+                            />
+                        )}
                     </div>
                 </div>
             )}
@@ -505,6 +629,23 @@ function FolderDetailContent() {
                             </button>
                         </div>
                     </div>
+                </div>
+            )}
+
+            {/* Loading Overlay saat Navigasi ke Video Native */}
+            {isNavigatingToVideo && (
+                <div className="fixed inset-0 z-[100] bg-surface flex flex-col items-center justify-center">
+                    <div className="relative flex items-center justify-center">
+                        <div className="w-20 h-20 border-4 border-surface-container-highest rounded-full"></div>
+                        <div className="w-20 h-20 border-4 border-primary border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+                        <Video className="w-8 h-8 text-primary absolute animate-pulse" />
+                    </div>
+                    <h3 className="text-on-surface font-display font-bold mt-6 text-xl animate-pulse">
+                        Menyiapkan Layar Penuh...
+                    </h3>
+                    <p className="text-on-surface-variant text-sm mt-2 font-medium">
+                        Beralih ke Pemutar Video
+                    </p>
                 </div>
             )}
         </div>

@@ -13,7 +13,14 @@ export default function LoginPage() {
         // Cek apakah user sudah login sebelumnya
         const storedUser = localStorage.getItem("user");
         if (storedUser) {
-            router.replace("/home");
+            const lastPath = sessionStorage.getItem("lastPath");
+            if (lastPath) {
+                // Hapus lastPath agar tidak redirect terus-menerus
+                sessionStorage.removeItem("lastPath");
+                router.replace(lastPath);
+            } else {
+                router.replace("/home");
+            }
             return;
         }
 

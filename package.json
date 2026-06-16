@@ -10,9 +10,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@capacitor-community/media": "^9.1.0",
     "@capacitor/android": "^8.4.0",
     "@capacitor/app": "^8.1.0",
+    "@capacitor/browser": "^8.0.3",
     "@capacitor/core": "^8.4.0",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/inappbrowser": "^4.0.0",
     "@capawesome/capacitor-background-task": "^8.0.2",
     "axios": "^1.18.0",
     "lucide-react": "^1.18.0",
