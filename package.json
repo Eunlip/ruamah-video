@@ -1,6 +1,6 @@
 {
   "name": "rumah-video",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "@capacitor/android": "^8.4.0",
+    "@capacitor/app": "^8.1.0",
     "@capacitor/core": "^8.4.0",
+    "@capawesome/capacitor-background-task": "^8.0.2",
     "axios": "^1.18.0",
     "lucide-react": "^1.18.0",
     "next": "16.2.9",

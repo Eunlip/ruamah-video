@@ -3,16 +3,26 @@
 import { useState, useEffect } from "react";
 import { LoginForm } from "@/components/features/auth/login-form";
 
+import { useRouter } from "next/navigation";
+
 export default function LoginPage() {
     const [isReady, setIsReady] = useState(false);
+    const router = useRouter();
 
     useEffect(() => {
+        // Cek apakah user sudah login sebelumnya
+        const storedUser = localStorage.getItem("user");
+        if (storedUser) {
+            router.replace("/folder");
+            return;
+        }
+
         // Tahan splash screen selama 1.5 detik, lalu mulai transisi "Premium"
         const timer = setTimeout(() => {
             setIsReady(true);
         }, 1500);
         return () => clearTimeout(timer);
-    }, []);
+    }, [router]);
 
     return (
         <div

@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, Suspense } from "react";
-import { ArrowLeft, Video, Clock, X, Search, Trash2 } from "lucide-react";
+import React, { useState, useEffect, Suspense } from "react";
+import { ArrowLeft, Video, Clock, X, Search, Trash2, Download, Loader2 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { VideoUploader } from "@/components/features/video/video-uploader";
 import { useLongPress } from "@/hooks/use-long-press";
+import { getVideosAPI } from "@/services/api";
 
 interface VideoItem {
     id: string;
@@ -17,10 +18,12 @@ interface VideoItem {
 
 function VideoCard({
     video,
+    isDeleting = false,
     onPlay,
     onLongPress,
 }: {
     video: VideoItem;
+    isDeleting?: boolean;
     onPlay: () => void;
     onLongPress: () => void;
 }) {
@@ -32,12 +35,12 @@ function VideoCard({
     return (
         <div
             {...longPressProps}
-            className="relative w-full aspect-video rounded-[24px] overflow-hidden shadow-md hover:shadow-lg transition-all cursor-pointer group select-none"
+            className="relative w-full aspect-video rounded-[24px] overflow-hidden shadow-md hover:shadow-lg transition-all cursor-pointer group select-none bg-surface-container"
         >
             {/* Full Thumbnail Image */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-                src={video.thumbnailData}
+                src={video.thumbnailData.startsWith("dummy") ? "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&q=80" : video.thumbnailData}
                 alt={video.title}
                 className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             />
@@ -75,6 +78,14 @@ function VideoCard({
                     <div className="w-0 h-0 border-t-8 border-t-transparent border-l-[16px] border-l-white border-b-8 border-b-transparent ml-1 drop-shadow-lg"></div>
                 </div>
             </div>
+
+            {/* Deleting Overlay */}
+            {isDeleting && (
+                <div className="absolute inset-0 bg-surface/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
+                    <Loader2 className="w-10 h-10 animate-spin text-error mb-2" />
+                    <p className="text-on-surface font-bold text-sm animate-pulse">Menghapus...</p>
+                </div>
+            )}
         </div>
     );
 }
@@ -84,19 +95,67 @@ function FolderDetailContent() {
     const searchParams = useSearchParams();
 
     const categoryName = searchParams.get("category") || "Kategori";
-    const year =
-        searchParams.get("year") || new Date().getFullYear().toString();
+    const year = searchParams.get("year") || new Date().getFullYear().toString();
     const type = searchParams.get("type") || "kpi";
 
     const [videos, setVideos] = useState<VideoItem[]>([]);
+    const [isLoadingData, setIsLoadingData] = useState(true);
+    const [isDeletingVideo, setIsDeletingVideo] = useState<string | null>(null);
     const [playingVideo, setPlayingVideo] = useState<VideoItem | null>(null);
-    const [actionSheetVideo, setActionSheetVideo] = useState<VideoItem | null>(
-        null,
-    );
+    const [actionSheetVideo, setActionSheetVideo] = useState<VideoItem | null>(null);
+    const [userRole, setUserRole] = useState<string>("viewer");
+
+    useEffect(() => {
+        const storedUser = localStorage.getItem("user");
+        if (storedUser) {
+            try {
+                const userObj = JSON.parse(storedUser);
+                setTimeout(() => {
+                    setUserRole(userObj.role?.toLowerCase() || "viewer");
+                }, 0);
+            } catch (e) {}
+        }
+    }, []);
 
     // Search state
     const [isSearchActive, setIsSearchActive] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
+
+    // Fetch real data from server
+    useEffect(() => {
+        const fetchVideos = async () => {
+            setIsLoadingData(true);
+            const res = await getVideosAPI();
+            if (res.success && res.data) {
+                interface ApiVideo {
+                    id: string;
+                    category: string;
+                    year: string | number;
+                    type: string;
+                    title: string;
+                    thumbnailData?: string;
+                    driveUrl?: string;
+                    duration?: string;
+                    createdAt?: string;
+                }
+                const filtered = res.data.filter((v: ApiVideo) => 
+                    String(v.category) === String(categoryName) &&
+                    String(v.year) === String(year) &&
+                    String(v.type).toLowerCase() === String(type).toLowerCase()
+                ).map((v: ApiVideo) => ({
+                    id: String(v.id),
+                    title: v.title,
+                    thumbnailData: v.thumbnailData || "dummy",
+                    videoUrl: v.driveUrl,
+                    duration: v.duration,
+                    createdAt: new Date(v.createdAt || Date.now()),
+                }));
+                setVideos(filtered);
+            }
+            setIsLoadingData(false);
+        };
+        fetchVideos();
+    }, [categoryName, year, type]);
 
     const isKpi = type === "kpi";
 
@@ -104,8 +163,50 @@ function FolderDetailContent() {
         setVideos((prev) => [video, ...prev]);
     };
 
-    const handleDeleteVideo = (id: string) => {
-        setVideos((prev) => prev.filter((v) => v.id !== id));
+    const handleDeleteVideo = async (id: string) => {
+        const confirmDelete = window.confirm("Apakah Anda yakin ingin menghapus video ini secara permanen?");
+        if (!confirmDelete) return;
+
+        setActionSheetVideo(null);
+        setIsDeletingVideo(id);
+
+        try {
+            const { deleteVideoAPI } = await import("@/services/api");
+            const res = await deleteVideoAPI(id);
+            if (res.success) {
+                setVideos((prev) => prev.filter((v) => v.id !== id));
+            } else {
+                alert("Gagal menghapus video: " + res.error);
+            }
+        } catch (error) {
+            alert("Terjadi kesalahan saat menghapus video.");
+        } finally {
+            setIsDeletingVideo(null);
+        }
+    };
+
+    const handleSaveVideo = (video: VideoItem) => {
+        if (!video.videoUrl) {
+            alert("URL Video tidak ditemukan.");
+            return;
+        }
+        setActionSheetVideo(null);
+        
+        // Ekstrak ID dari URL Google Drive
+        const match = video.videoUrl.match(/\/d\/(.+?)\//);
+        if (match && match[1]) {
+            const fileId = match[1];
+            // Paksa download file Google Drive
+            window.open(`https://drive.google.com/uc?export=download&id=${fileId}`, '_blank');
+        } else {
+            // Jika ini adalah Blob URL (video yang baru saja di-upload tapi belum di-refresh)
+            const a = document.createElement("a");
+            a.href = video.videoUrl;
+            a.download = `${video.title}.mp4`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
     };
 
     interface WebkitDocument extends Document {
@@ -216,7 +317,7 @@ function FolderDetailContent() {
                             autoFocus
                             type="text"
                             placeholder="Cari video..."
-                            className="w-full bg-transparent border-none outline-none text-white placeholder:text-white/70 text-[17px] font-sans"
+                            className="w-full bg-transparent border-none outline-none text-white placeholder:text-white/70 text-[18px] font-sans h-full py-2"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                         />
@@ -258,12 +359,14 @@ function FolderDetailContent() {
             </header>
 
             <main className="flex-1 px-5 pt-6">
-                <div className="mb-6">
-                    <VideoUploader
-                        onUploadComplete={handleVideoUploaded}
-                        isKpi={isKpi}
-                    />
-                </div>
+                {userRole === "editor" && (
+                    <div className="mb-6">
+                        <VideoUploader
+                            onUploadComplete={handleVideoUploaded}
+                            isKpi={isKpi}
+                        />
+                    </div>
+                )}
 
                 <div className="mt-8">
                     <h3 className="font-sans font-bold text-on-surface mb-4 flex items-center gap-2">
@@ -276,42 +379,51 @@ function FolderDetailContent() {
                         Video Tersimpan ({filteredVideos.length})
                     </h3>
 
-                    {filteredVideos.length === 0 ? (
-                        <div className="text-center py-12 px-4 bg-surface-container-lowest rounded-[20px] border border-surface-dim/50 border-dashed">
-                            <div
-                                className={`w-16 h-16 rounded-full mx-auto flex items-center justify-center mb-4 ${
-                                    isKpi
-                                        ? "bg-primary/10 text-primary"
-                                        : "bg-secondary/10 text-secondary"
-                                }`}
-                            >
-                                <Video size={32} />
+                    <div className="flex-1 relative">
+                        {isLoadingData ? (
+                            <div className="flex flex-col items-center justify-center py-12 px-4 bg-surface-container-lowest rounded-[20px] text-on-surface-variant border border-surface-dim/50">
+                                <Loader2 className="w-10 h-10 animate-spin mb-4 text-primary" />
+                                <p className="font-bold text-on-surface">Memuat data video...</p>
+                                <p className="text-sm mt-1 text-center max-w-[80%]">Tunggu sebentar, kami sedang mengambil data dari server.</p>
                             </div>
-                            <p className="font-bold text-on-surface mb-1">
-                                {searchQuery
-                                    ? "Video tidak ditemukan"
-                                    : "Belum ada video"}
-                            </p>
-                            <p className="text-sm text-on-surface-variant">
-                                {searchQuery
-                                    ? `Tidak ada video dengan nama "${searchQuery}"`
-                                    : "Upload video pertama untuk folder ini."}
-                            </p>
-                        </div>
-                    ) : (
-                        <div className="flex flex-col gap-4">
-                            {filteredVideos.map((video) => (
-                                <VideoCard
-                                    key={video.id}
-                                    video={video}
-                                    onPlay={() => handlePlayVideo(video)}
-                                    onLongPress={() =>
-                                        setActionSheetVideo(video)
-                                    }
-                                />
-                            ))}
-                        </div>
-                    )}
+                        ) : filteredVideos.length === 0 ? (
+                            <div className="text-center py-12 px-4 bg-surface-container-lowest rounded-[20px] border border-surface-dim/50 border-dashed">
+                                <div
+                                    className={`w-16 h-16 rounded-full mx-auto flex items-center justify-center mb-4 ${
+                                        isKpi
+                                            ? "bg-primary/10 text-primary"
+                                            : "bg-secondary/10 text-secondary"
+                                    }`}
+                                >
+                                    <Video size={32} />
+                                </div>
+                                <p className="font-bold text-on-surface mb-1">
+                                    {searchQuery
+                                        ? "Video tidak ditemukan"
+                                        : "Belum ada video"}
+                                </p>
+                                <p className="text-sm text-on-surface-variant">
+                                    {searchQuery
+                                        ? `Tidak ada video dengan nama "${searchQuery}"`
+                                        : "Upload video pertama untuk folder ini."}
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-4">
+                                {filteredVideos.map((video) => (
+                                    <VideoCard
+                                        key={video.id}
+                                        video={video}
+                                        isDeleting={isDeletingVideo === video.id}
+                                        onPlay={() => setPlayingVideo(video)}
+                                        onLongPress={() =>
+                                            setActionSheetVideo(video)
+                                        }
+                                    />
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </main>
 
@@ -333,7 +445,13 @@ function FolderDetailContent() {
                         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                         <video
                             id="main-video-player"
-                            src={playingVideo.videoUrl}
+                            src={
+                                playingVideo.videoUrl.startsWith("blob:")
+                                    ? playingVideo.videoUrl
+                                    : (playingVideo.videoUrl.match(/\/d\/(.+?)\//)
+                                          ? `https://drive.google.com/uc?export=download&id=${playingVideo.videoUrl.match(/\/d\/(.+?)\//)![1]}`
+                                          : playingVideo.videoUrl)
+                            }
                             controls
                             autoPlay
                             playsInline
@@ -361,15 +479,24 @@ function FolderDetailContent() {
 
                         <div className="flex flex-col gap-3">
                             <button
-                                onClick={() => {
-                                    handleDeleteVideo(actionSheetVideo.id);
-                                    setActionSheetVideo(null);
-                                }}
-                                className="w-full flex items-center justify-center gap-2 p-4 rounded-2xl bg-red-500/10 text-red-600 hover:bg-red-500/20 active:bg-red-500/30 transition-colors font-bold text-[16px]"
+                                onClick={() => handleSaveVideo(actionSheetVideo)}
+                                className="w-full flex items-center justify-center gap-2 p-4 rounded-2xl bg-primary/10 text-primary hover:bg-primary/20 active:bg-primary/30 transition-colors font-bold text-[16px]"
                             >
-                                <Trash2 size={20} />
-                                Hapus Video
+                                <Download size={20} />
+                                Simpan Video
                             </button>
+                            {userRole === "editor" && (
+                                <button
+                                    onClick={() => {
+                                        handleDeleteVideo(actionSheetVideo.id);
+                                        setActionSheetVideo(null);
+                                    }}
+                                    className="w-full flex items-center justify-center gap-2 p-4 rounded-2xl bg-red-500/10 text-red-600 hover:bg-red-500/20 active:bg-red-500/30 transition-colors font-bold text-[16px]"
+                                >
+                                    <Trash2 size={20} />
+                                    Hapus Video
+                                </button>
+                            )}
                             <button
                                 onClick={() => setActionSheetVideo(null)}
                                 className="w-full p-4 rounded-2xl text-on-surface font-bold hover:bg-surface-container active:bg-surface-container-high transition-colors text-[16px]"

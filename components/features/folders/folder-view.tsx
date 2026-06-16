@@ -10,6 +10,7 @@ import {
     Search,
     ChevronDown,
     Trash2,
+    Loader2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
@@ -121,6 +122,20 @@ function YearChip({ year, isKpi, onClick, onLongPress }: YearChipProps) {
 export function FolderView({ title, type, initialFolders }: FolderViewProps) {
     const router = useRouter();
     const [folders, setFolders] = useState<FolderItem[]>(initialFolders);
+    const [isLoading, setIsLoading] = useState(true);
+    const [userRole, setUserRole] = useState<string>("viewer");
+
+    useEffect(() => {
+        const storedUser = localStorage.getItem("user");
+        if (storedUser) {
+            try {
+                const userObj = JSON.parse(storedUser);
+                setTimeout(() => {
+                    setUserRole(userObj.role?.toLowerCase() || "viewer");
+                }, 0);
+            } catch (e) {}
+        }
+    }, []);
 
     // Action Sheet states
     const [actionSheetFolder, setActionSheetFolder] = useState<{
@@ -147,6 +162,52 @@ export function FolderView({ title, type, initialFolders }: FolderViewProps) {
 
     // Accordion state
     const [expandedFolder, setExpandedFolder] = useState<string | null>(null);
+
+    // Fetch folders dynamically from database videos
+    useEffect(() => {
+        const fetchFolders = async () => {
+            setIsLoading(true);
+            try {
+                const { getVideosAPI } = await import("@/services/api");
+                const res = await getVideosAPI();
+                if (res.success && res.data) {
+                    interface ApiVideo {
+                        id: string;
+                        category: string;
+                        year?: string | number;
+                        type: string;
+                    }
+                    const typeVideos = res.data.filter((v: ApiVideo) => String(v.type).toLowerCase() === type.toLowerCase());
+                    
+                    const apiFolders: FolderItem[] = typeVideos.map((v: ApiVideo) => ({
+                        id: String(v.id),
+                        name: v.category,
+                        year: v.year ? String(v.year) : undefined,
+                    }));
+
+                    // Remove duplicates based on name and year
+                    const uniqueFolders = apiFolders.filter((f, index, self) => 
+                        index === self.findIndex((t) => (
+                            t.name === f.name && t.year === f.year
+                        ))
+                    );
+
+                    setFolders(prev => {
+                        const combined = [...prev, ...uniqueFolders];
+                        const deduplicatedCombined = combined.filter((f, index, self) => 
+                            index === self.findIndex((t) => (
+                                t.name === f.name && t.year === f.year
+                            ))
+                        );
+                        return deduplicatedCombined;
+                    });
+                }
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchFolders();
+    }, [type]);
 
     // Prevent body scroll when modals are open
     useEffect(() => {
@@ -292,7 +353,7 @@ export function FolderView({ title, type, initialFolders }: FolderViewProps) {
                                     {title}
                                 </h1>
                                 <p className="text-[13px] font-sans opacity-90">
-                                    {groupedFolders.length} Kategori Tersedia
+                                    {isLoading ? "Memuat Kategori..." : `${groupedFolders.length} Kategori Tersedia`}
                                 </p>
                             </div>
                         </div>
@@ -309,8 +370,13 @@ export function FolderView({ title, type, initialFolders }: FolderViewProps) {
             <main className="flex-1 px-5 pt-6">
                 {/* Folder List Layout */}
                 <div className="flex flex-col gap-4">
-                    {groupedFolders.length === 0 ? (
-                        <div className="text-center py-10 opacity-50">
+                    {isLoading ? (
+                        <div className="flex flex-col items-center justify-center py-20 text-on-surface-variant/60">
+                            <Loader2 size={48} className="animate-spin mb-4" />
+                            <p className="font-medium animate-pulse text-[15px]">Mencari Kategori Anda...</p>
+                        </div>
+                    ) : groupedFolders.length === 0 ? (
+                        <div className="text-center py-10 opacity-50 animate-in fade-in duration-500">
                             <Folder
                                 size={48}
                                 className="mx-auto mb-4 opacity-50"
@@ -338,11 +404,13 @@ export function FolderView({ title, type, initialFolders }: FolderViewProps) {
                                         onClick={() =>
                                             handleFolderClick(group.name)
                                         }
-                                        onLongPress={() =>
-                                            setActionSheetFolder({
-                                                name: group.name,
-                                            })
-                                        }
+                                        onLongPress={() => {
+                                            if (userRole === "editor") {
+                                                setActionSheetFolder({
+                                                    name: group.name,
+                                                });
+                                            }
+                                        }}
                                     />
 
                                     {/* Expanded Content (Years) */}
@@ -370,31 +438,34 @@ export function FolderView({ title, type, initialFolders }: FolderViewProps) {
                                                                 )}&year=${year}&type=${type}`,
                                                             )
                                                         }
-                                                        onLongPress={() =>
-                                                            setActionSheetYear({
-                                                                category:
-                                                                    group.name,
-                                                                year,
-                                                            })
-                                                        }
+                                                        onLongPress={() => {
+                                                            if (userRole === "editor") {
+                                                                setActionSheetYear({
+                                                                    category: group.name,
+                                                                    year,
+                                                                });
+                                                            }
+                                                        }}
                                                     />
                                                 ))}
 
                                                 {/* Add Year Shortcut Chip */}
-                                                <div
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setAddingYearTo(
-                                                            group.name,
-                                                        );
-                                                    }}
-                                                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl cursor-pointer transition-all active:scale-95 border-2 border-dashed border-surface-dim hover:border-primary/50 text-on-surface-variant hover:text-primary bg-surface-container/30 hover:bg-primary/5"
-                                                >
-                                                    <Plus size={16} />
-                                                    <span className="font-bold text-sm">
-                                                        Tambah
-                                                    </span>
-                                                </div>
+                                                {userRole === "editor" && (
+                                                    <div
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setAddingYearTo(
+                                                                group.name,
+                                                            );
+                                                        }}
+                                                        className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl cursor-pointer transition-all active:scale-95 border-2 border-dashed border-surface-dim hover:border-primary/50 text-on-surface-variant hover:text-primary bg-surface-container/30 hover:bg-primary/5"
+                                                    >
+                                                        <Plus size={16} />
+                                                        <span className="font-bold text-sm">
+                                                            Tambah
+                                                        </span>
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -406,21 +477,23 @@ export function FolderView({ title, type, initialFolders }: FolderViewProps) {
             </main>
 
             {/* Floating Action Button (Extended FAB) */}
-            <div className="fixed bottom-24 right-0 left-0 max-w-md mx-auto w-full pointer-events-none flex justify-end px-5 z-40">
-                <button
-                    onClick={() => setIsModalOpen(true)}
-                    className={`pointer-events-auto h-14 px-5 rounded-full flex items-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,0,0,0.3)] transition-all active:scale-[0.97] hover:shadow-[0_12px_28px_-4px_rgba(0,0,0,0.4)] ${
-                        isKpi
-                            ? "bg-primary text-white"
-                            : "bg-secondary text-white"
-                    }`}
-                >
-                    <Plus size={24} />
-                    <span className="font-bold text-[15px] font-sans pr-1">
-                        Buat Kategori
-                    </span>
-                </button>
-            </div>
+            {userRole === "editor" && (
+                <div className="fixed bottom-24 right-0 left-0 max-w-md mx-auto w-full pointer-events-none flex justify-end px-5 z-40">
+                    <button
+                        onClick={() => setIsModalOpen(true)}
+                        className={`pointer-events-auto h-14 px-5 rounded-full flex items-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,0,0,0.3)] transition-all active:scale-[0.97] hover:shadow-[0_12px_28px_-4px_rgba(0,0,0,0.4)] ${
+                            isKpi
+                                ? "bg-primary text-white"
+                                : "bg-secondary text-white"
+                        }`}
+                    >
+                        <Plus size={24} />
+                        <span className="font-bold text-[15px] font-sans pr-1">
+                            Buat Kategori
+                        </span>
+                    </button>
+                </div>
+            )}
 
             {/* Modal Overlay: Buat Kategori Baru */}
             {isModalOpen && (

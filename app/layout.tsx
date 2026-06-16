@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Plus_Jakarta_Sans, Anybody } from "next/font/google";
 import "./globals.css";
+import { UpdateChecker } from "@/components/features/updater/update-checker";
 
 const plusJakartaSans = Plus_Jakarta_Sans({
   variable: "--font-plus-jakarta-sans",
@@ -29,6 +30,7 @@ export default function RootLayout({
       className={`${plusJakartaSans.variable} ${anybody.variable} h-full antialiased`}
     >
       <body suppressHydrationWarning className="min-h-full flex flex-col font-sans bg-surface text-on-surface">
+        <UpdateChecker />
         {children}
       </body>
     </html>
