@@ -1,7 +1,18 @@
+"use client";
+
 import React from "react";
 import { Button } from "@/components/ui/button";
+import { useRouter } from "next/navigation";
+import { LogOut } from "lucide-react";
 
 export default function ProfilePage() {
+    const router = useRouter();
+
+    const handleLogout = () => {
+        // Logika logout bisa ditambahkan di sini (misal hapus token/cookie)
+        router.replace("/");
+    };
+
     return (
         <div className="flex flex-col min-h-screen pt-8 px-6 pb-24">
             <header className="mb-8">
@@ -18,7 +29,11 @@ export default function ProfilePage() {
                 <p className="text-on-surface-variant text-sm">123456789</p>
 
                 <div className="w-full mt-10">
-                    <Button variant="ghost" className="w-full">
+                    <Button
+                        variant="ghost"
+                        className="w-full text-red-500 hover:text-red-600 hover:bg-red-50"
+                        onClick={handleLogout}
+                    >
                         Keluar
                     </Button>
                 </div>
